@@ -1,0 +1,96 @@
+---
+title: "Assignment 3"
+author: "Kartikey Vyas"
+date: "21/09/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+library(tidyverse)
+library(rpart)
+```
+
+### Question 1
+*Use rpart to fit and prune (if necessary) a tree predicting spam/non-spam from the common word counts in the wordmatrix matrix. Report the accuracy with a confusion matrix. Plot the fitted tree (without all the labels) and comment on its shape.*
+
+```{r tree, cache=TRUE}
+# load data
+load("spam.rda")
+
+# Add the is_spam column to wordmatrix
+y <- df %>% 
+  select(is_spam) %>%
+  mutate(is_spam = factor(is_spam)) # ensure it is a factor so that we can treat this as a classification problem
+  
+words.df <- cbind(wordmatrix,y)
+
+# fit a tree with all variables as predictors
+tree1 <- words.df %>% rpart(is_spam~.,.)
+
+# view the splits and complexity penalty
+tree1
+plotcp(tree1)
+```
+
+We observe that we can prune the tree - there is a negligible improvement in X-val relative error from 14 to 16 splits at a complexity of 0.014.
+
+```{r pruning, cache=TRUE}
+# prune automatically generated tree
+tree1_pruned <- prune(tree1, cp=0.014)
+
+# confusion matrix of predictions from tree
+table(actual = words.df$is_spam, predicted = predict(tree1_pruned, type = "class"))
+```
+From the confusion matrix, the accuracy of our model is:
+  $$\mathrm{Accuracy} = \frac{\mathrm{TP + TN}}{\mathrm{total}} = \frac{561 + 4770}{5574} = 0.9564 \ (\mathrm{4 \ dp})$$
+
+```{r tree features}
+# plot the tree
+plot(tree1_pruned,margin = 0.2)
+```
+
+The fitted tree seems to keep splitting on the left branch, continuing until it reaches a complexity of 0.014. From inspecting the text on the plot, we observe that with each split, the right branch identifies spam messages while the left branch still has too high a gini impurity index. We are essentially identifying a word that clearly identifies spam messages with each split, slowly shaving off the number of spam messages in the left branch. This makes sense because we would expect that spam messages have high numbers of specific words, as we identify and remove these important words it becomes harder and harder to distinguish between spam and non-spam messages.
+
+
+### Question 2
+*For each common word in wordmatrix, compute the numbers* $y_i$ *and* $n_i$ *and that give, respectively,  the number of occurrences in spam and non-spam messages. The overall evidence provided by having this word in a message can be approximated by* $e_i = \log(y_i+1) - \log(n_i+1)$*. A `Naïve Bayes’ classifier sums up the* $e_i$ *for every (common) word in the message to get an overall score for each message and then splits this at some threshold to get a classification. Construct a naïve Bayes classifier and choose the threshold so the proportion of spam predicted is the same as the proportion observed. Report the accuracy with a confusion matrix.*
+
+```{r bayes}
+# compute y_i, n_i and e_i
+y_i <- words.df %>%
+  filter(is_spam == "TRUE") %>%
+  select(-is_spam) %>%
+  colSums(., na.rm = TRUE)
+
+n_i <- words.df %>%
+  filter(is_spam == "FALSE") %>%
+  select(-is_spam) %>%
+  colSums(., na.rm = TRUE)
+
+e_i <- log(y_i + 1) - log(n_i + 1)
+
+# construct naive bayes classifier
+naiveBayes <- t(t(wordmatrix) * e_i) %>% rowSums(.)
+
+# produce confusion matrix - use threshold of -6.65 for the naive bayes classifier
+table(actual = words.df$is_spam, predicted = naiveBayes>-6.65)
+```
+
+We chose -6.65 as the threshold for the Naïve Bayes classifier to yield a 13.4% proportion of messages classified as spam, which is identical to the proportion of messages observed as spam.
+
+From the confusion matrix, the accuracy of this classifier is:
+  $$\mathrm{Accuracy} = \frac{\mathrm{TP + TN}}{\mathrm{total}} = \frac{414 + 4494}{5574} = 0.8805 \ (\mathrm{4 \ dp})$$
+  
+### Question 3
+*Why is spam/non-spam accuracy likely to be higher with this dataset than in real life?*
+
+It is stated in the UCI archive description of this dataset that 425 SMS spam messages were manually extracted from a forum. Since this process was not randomised, there could have been human bias in selecting messages that fit a certain format or displayed some sort of pattern, making them easier to identify as spam. Had the spam messages been randomly selected from the entirety of the claims made on the forum, we would likely see a much more diverse range of words used in each message. Therefore, the accuracy of spam identification is likely to be higher in this dataset than in real life.
+
+*What can you say about the generalisability of the classifier to particular populations of text users?*
+
+For both the **recursive partitioning tree** and **Naïve Bayes** classifiers, the data used to fit the models is different to many particular populations of text users. Since the dataset is primarily focused on a small number of users in the UK, we could not apply these models effectively to non-english speaking populations. 
+
+Furthermore, the language used among different age groups could vary siginificantly, further damaging the generalisability of these classifiers; the words that commonly appear in the texts of 18-24 year olds would be quite different from the words that commonly appear in the texts of 45+ year olds.
